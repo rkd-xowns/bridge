@@ -42,15 +42,52 @@ export const initializeDatabase = async (): Promise<void> => {
 };
 
 /**
- * Save data to Supabase
+ * Save data to Supabase with merge logic to prevent data loss from multiple tabs
  */
 export const saveBridgeData = async (data: SharedData): Promise<boolean> => {
   try {
+    // First, get existing data to merge with (prevents data loss from race conditions)
+    const existingData = await getBridgeData();
+    
+    let dataToSave = data;
+    
+    if (existingData) {
+      // Check if we're trying to save empty data when remote has data
+      const localHasData = (data.events && data.events.length > 0) || 
+                          (data.feelings && data.feelings.length > 0) ||
+                          Object.keys(data.highlights || {}).length > 0;
+      const remoteHasData = (existingData.events && existingData.events.length > 0) ||
+                           (existingData.feelings && existingData.feelings.length > 0) ||
+                           Object.keys(existingData.highlights || {}).length > 0;
+      
+      // If remote has data but local is empty, merge instead of overwrite
+      if (remoteHasData && !localHasData) {
+        // Merge with existing data to preserve it
+        dataToSave = {
+          events: mergeData(existingData.events || [], data.events || []),
+          feelings: mergeData(existingData.feelings || [], data.feelings || []),
+          highlights: { ...existingData.highlights, ...data.highlights },
+          names: data.names || existingData.names,
+          lastUpdated: new Date().toISOString()
+        };
+      } else if (localHasData) {
+        // Normal case: merge both when we have local data
+        dataToSave = {
+          events: mergeData(existingData.events || [], data.events || []),
+          feelings: mergeData(existingData.feelings || [], data.feelings || []),
+          highlights: { ...existingData.highlights, ...data.highlights },
+          names: data.names || existingData.names,
+          lastUpdated: new Date().toISOString()
+        };
+      }
+      // If both are empty, just save as-is
+    }
+    
     const { error } = await supabase
       .from(TABLE_NAME)
       .upsert({
         id: BRIDGE_ID,
-        ...data,
+        ...dataToSave,
         lastUpdated: new Date().toISOString()
       }, {
         onConflict: 'id'
@@ -106,9 +143,11 @@ export const getBridgeData = async (): Promise<SharedData | null> => {
 /**
  * Subscribe to real-time updates from Supabase
  * Returns an unsubscribe function
+ * @param skipInitialLoad - If true, skip the initial data fetch (useful when loading explicitly)
  */
 export const subscribeToBridgeData = (
-  callback: (data: SharedData | null) => void
+  callback: (data: SharedData | null) => void,
+  skipInitialLoad: boolean = false
 ): (() => void) => {
   const channel = supabase
     .channel('bridge-changes')
@@ -128,8 +167,10 @@ export const subscribeToBridgeData = (
     )
     .subscribe();
 
-  // Also fetch initial data
-  getBridgeData().then(callback);
+  // Only fetch initial data if not skipped (we load it explicitly in App.tsx)
+  if (!skipInitialLoad) {
+    getBridgeData().then(callback);
+  }
 
   // Return unsubscribe function
   return () => {

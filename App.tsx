@@ -74,41 +74,49 @@ const App: React.FC = () => {
     loadInitialData().catch(console.error);
   }, []);
 
-  // Real-time subscription to Supabase
+  // Real-time subscription to Supabase (skip initial load since we do it explicitly)
   useEffect(() => {
-    const unsubscribe = subscribeToBridgeData((remoteData) => {
-      // Only process updates after initial data has been loaded
-      if (!hasLoadedInitialData.current) {
-        return;
-      }
-      
-      if (remoteData && !isUpdatingFromRemote.current) {
-        isUpdatingFromRemote.current = true;
-        
-        // Merge remote data with local state
-        setAllEvents(prev => {
-          const merged = mergeData(prev, remoteData.events);
-          return merged;
-        });
-        setFeelings(prev => mergeData(prev, remoteData.feelings));
-        setHighlights(prev => ({ ...prev, ...remoteData.highlights }));
-        if (remoteData.names) {
-          setNames(remoteData.names);
+    let unsubscribe: (() => void) | null = null;
+    
+    // Wait a bit before setting up subscription to ensure initial load completes
+    const timeoutId = setTimeout(() => {
+      unsubscribe = subscribeToBridgeData((remoteData) => {
+        // Only process updates after initial data has been loaded
+        if (!hasLoadedInitialData.current) {
+          return;
         }
         
-        setSyncStatus('synced');
-        
-        // Reset flag after a short delay
-        setTimeout(() => {
-          isUpdatingFromRemote.current = false;
-        }, 100);
-      } else if (!remoteData) {
-        setSyncStatus('error');
-      }
-    });
+        if (remoteData && !isUpdatingFromRemote.current) {
+          isUpdatingFromRemote.current = true;
+          
+          // Merge remote data with local state
+          setAllEvents(prev => {
+            const merged = mergeData(prev, remoteData.events);
+            return merged;
+          });
+          setFeelings(prev => mergeData(prev, remoteData.feelings));
+          setHighlights(prev => ({ ...prev, ...remoteData.highlights }));
+          if (remoteData.names) {
+            setNames(remoteData.names);
+          }
+          
+          setSyncStatus('synced');
+          
+          // Reset flag after a short delay
+          setTimeout(() => {
+            isUpdatingFromRemote.current = false;
+          }, 100);
+        } else if (!remoteData) {
+          setSyncStatus('error');
+        }
+      }, true); // Skip initial load
+    }, 500); // Small delay to let initial load complete
 
     return () => {
-      unsubscribe();
+      clearTimeout(timeoutId);
+      if (unsubscribe) {
+        unsubscribe();
+      }
     };
   }, []);
 
@@ -136,6 +144,7 @@ const App: React.FC = () => {
     lastSavedData.current = dataString;
     setSyncStatus('pending');
     
+    // Save function will handle merging with existing data to prevent data loss
     saveBridgeData(data).then(success => {
       setSyncStatus(success ? 'synced' : 'error');
     });
