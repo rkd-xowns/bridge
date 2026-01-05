@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Location, CalendarEvent, DailyHighlight, DailyFeeling } from './types';
 import { getTimeInZone } from './utils/timeUtils';
-import { saveBridgeData, subscribeToBridgeData, mergeData, SharedData, initializeDatabase } from './services/supabaseService';
+import { saveBridgeData, subscribeToBridgeData, mergeData, SharedData, initializeDatabase, getBridgeData } from './services/supabaseService';
 import SynchronizedTimeline from './components/SynchronizedTimeline';
 import EventModal from './components/EventModal';
 import CalendarPicker from './components/CalendarPicker';
@@ -27,6 +27,7 @@ const App: React.FC = () => {
   // Track if we're updating from remote to prevent infinite loops
   const isUpdatingFromRemote = useRef(false);
   const lastSavedData = useRef<string>('');
+  const hasLoadedInitialData = useRef(false);
   
   const [names, setNames] = useState<{ me: string; partner: string }>({ me: '태준', partner: '유주' });
   const [highlights, setHighlights] = useState<Record<string, DailyHighlight>>({});
@@ -40,14 +41,47 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
-  // Initialize database on mount
+  // Initialize database and load initial data on mount
   useEffect(() => {
-    initializeDatabase().catch(console.error);
+    const loadInitialData = async () => {
+      await initializeDatabase();
+      
+      // Load initial data from Supabase
+      const initialData = await getBridgeData();
+      if (initialData) {
+        isUpdatingFromRemote.current = true;
+        
+        // Set initial data directly (no merge needed on first load)
+        setAllEvents(initialData.events || []);
+        setFeelings(initialData.feelings || []);
+        setHighlights(initialData.highlights || {});
+        if (initialData.names) {
+          setNames(initialData.names);
+        }
+        
+        // Update lastSavedData to prevent immediate save
+        lastSavedData.current = JSON.stringify(initialData);
+        hasLoadedInitialData.current = true;
+        
+        setTimeout(() => {
+          isUpdatingFromRemote.current = false;
+        }, 100);
+      } else {
+        hasLoadedInitialData.current = true;
+      }
+    };
+    
+    loadInitialData().catch(console.error);
   }, []);
 
   // Real-time subscription to Supabase
   useEffect(() => {
     const unsubscribe = subscribeToBridgeData((remoteData) => {
+      // Only process updates after initial data has been loaded
+      if (!hasLoadedInitialData.current) {
+        return;
+      }
+      
       if (remoteData && !isUpdatingFromRemote.current) {
         isUpdatingFromRemote.current = true;
         
@@ -80,7 +114,8 @@ const App: React.FC = () => {
 
   // Save to Supabase when data changes (but not when updating from remote)
   useEffect(() => {
-    if (isUpdatingFromRemote.current) {
+    // Don't save until initial data has been loaded
+    if (!hasLoadedInitialData.current || isUpdatingFromRemote.current) {
       return;
     }
 
