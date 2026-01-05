@@ -1,0 +1,7 @@
+{
+  "name": "Bridge",
+  "description": "A specialized scheduling app for long-distance couples to sync timelines between Korea and Georgia, USA",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
