@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Location, CalendarEvent, DailyHighlight, DailyFeeling } from './types';
 import { getTimeInZone } from './utils/timeUtils';
-import { updateBridge, getBridgeData, mergeData, SharedData } from './services/syncService';
+import { saveBridgeData, subscribeToBridgeData, mergeData, SharedData, initializeDatabase } from './services/supabaseService';
 import SynchronizedTimeline from './components/SynchronizedTimeline';
 import EventModal from './components/EventModal';
 import CalendarPicker from './components/CalendarPicker';
@@ -18,40 +18,20 @@ const PRESET_COLORS = [
   { name: 'Violet', hex: '#8b5cf6' },
 ];
 
-const PRIVATE_BRIDGE_ID = 'ldr-taejun-yuju-bridge-v1';
-
 const App: React.FC = () => {
-  const STORAGE_KEYS = {
-    EVENTS: 'bridge_ldr_events',
-    HIGHLIGHTS: 'bridge_ldr_highlights',
-    FEELINGS: 'bridge_ldr_feelings',
-    NAMES: 'bridge_ldr_names'
-  };
-
   const [currentUser, setCurrentUser] = useState<'me' | 'partner'>('me');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'error'>('synced');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
-  const [names, setNames] = useState<{ me: string; partner: string }>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.NAMES);
-    return saved ? JSON.parse(saved) : { me: '태준', partner: '유주' };
-  });
-
-  const [highlights, setHighlights] = useState<Record<string, DailyHighlight>>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.HIGHLIGHTS);
-    return saved ? JSON.parse(saved) : {};
-  });
+  // Track if we're updating from remote to prevent infinite loops
+  const isUpdatingFromRemote = useRef(false);
+  const lastSavedData = useRef<string>('');
   
-  const [feelings, setFeelings] = useState<DailyFeeling[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.FEELINGS);
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [allEvents, setAllEvents] = useState<CalendarEvent[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.EVENTS);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [names, setNames] = useState<{ me: string; partner: string }>({ me: '태준', partner: '유주' });
+  const [highlights, setHighlights] = useState<Record<string, DailyHighlight>>({});
+  const [feelings, setFeelings] = useState<DailyFeeling[]>([]);
+  const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
 
   const [isEditingHighlight, setIsEditingHighlight] = useState(false);
   const [tempHighlightTitle, setTempHighlightTitle] = useState('');
@@ -60,37 +40,71 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
-  // Background Push
+  // Initialize database on mount
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(allEvents));
-    localStorage.setItem(STORAGE_KEYS.HIGHLIGHTS, JSON.stringify(highlights));
-    localStorage.setItem(STORAGE_KEYS.FEELINGS, JSON.stringify(feelings));
-    localStorage.setItem(STORAGE_KEYS.NAMES, JSON.stringify(names));
+    initializeDatabase().catch(console.error);
+  }, []);
+
+  // Real-time subscription to Supabase
+  useEffect(() => {
+    const unsubscribe = subscribeToBridgeData((remoteData) => {
+      if (remoteData && !isUpdatingFromRemote.current) {
+        isUpdatingFromRemote.current = true;
+        
+        // Merge remote data with local state
+        setAllEvents(prev => {
+          const merged = mergeData(prev, remoteData.events);
+          return merged;
+        });
+        setFeelings(prev => mergeData(prev, remoteData.feelings));
+        setHighlights(prev => ({ ...prev, ...remoteData.highlights }));
+        if (remoteData.names) {
+          setNames(remoteData.names);
+        }
+        
+        setSyncStatus('synced');
+        
+        // Reset flag after a short delay
+        setTimeout(() => {
+          isUpdatingFromRemote.current = false;
+        }, 100);
+      } else if (!remoteData) {
+        setSyncStatus('error');
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Save to Supabase when data changes (but not when updating from remote)
+  useEffect(() => {
+    if (isUpdatingFromRemote.current) {
+      return;
+    }
+
+    const data: SharedData = { 
+      events: allEvents, 
+      highlights, 
+      feelings, 
+      names, 
+      lastUpdated: new Date().toISOString() 
+    };
     
+    // Only save if data actually changed
+    const dataString = JSON.stringify(data);
+    if (dataString === lastSavedData.current) {
+      return;
+    }
+    
+    lastSavedData.current = dataString;
     setSyncStatus('pending');
-    const data: SharedData = { events: allEvents, highlights, feelings, names, lastUpdated: new Date().toISOString() };
-    updateBridge(PRIVATE_BRIDGE_ID, data).then(success => {
+    
+    saveBridgeData(data).then(success => {
       setSyncStatus(success ? 'synced' : 'error');
     });
   }, [allEvents, highlights, feelings, names]);
-
-  // Background Pull (Polling)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const remote = await getBridgeData(PRIVATE_BRIDGE_ID);
-      if (remote) {
-        setAllEvents(prev => mergeData(prev, remote.events));
-        setFeelings(prev => mergeData(prev, remote.feelings));
-        setHighlights(prev => ({ ...prev, ...remote.highlights }));
-        if (remote.names) setNames(remote.names);
-        setSyncStatus('synced');
-      } else {
-        // Only set error if we actually fail a network request
-        // (getBridgeData logs the error to console internally)
-      }
-    }, 15000); 
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {

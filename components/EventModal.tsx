@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { Location } from '../types';
+import { getTimezoneAbbreviation } from '../utils/timeUtils';
 
 interface EventModalProps {
   isOpen: boolean;
@@ -102,14 +103,14 @@ const EventModal: React.FC<EventModalProps> = ({ isOpen, onClose, onSave, userLo
                 onClick={() => setSelectedTz(Location.KOREA)}
                 className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${selectedTz === Location.KOREA ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400'}`}
               >
-                Seoul (KST)
+                Seoul ({getTimezoneAbbreviation(Location.KOREA)})
               </button>
               <button 
                 type="button" 
                 onClick={() => setSelectedTz(Location.GEORGIA)}
                 className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${selectedTz === Location.GEORGIA ? 'bg-white text-pink-600 shadow-sm' : 'text-gray-400'}`}
               >
-                Georgia (EST/EDT)
+                Georgia ({getTimezoneAbbreviation(Location.GEORGIA)})
               </button>
             </div>
           </div>
@@ -165,7 +166,7 @@ const EventModal: React.FC<EventModalProps> = ({ isOpen, onClose, onSave, userLo
                   onClick={() => setType(cat)}
                   className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${type === cat ? 'bg-pink-500 text-white shadow-lg shadow-pink-100 scale-105' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}
                 >
-                  {cat === 'date' ? 'Date ❤️' : cat === 'study' ? 'Study 📚' : cat}
+                  {cat === 'date' ? 'Date ❤️' : cat === 'study' ? 'Study 📚' : cat === 'leisure' ? 'Free to Call' : cat}
                 </button>
               ))}
             </div>

@@ -85,3 +85,16 @@ export const getDaysInMonth = (year: number, month: number) => {
 export const getFirstDayOfMonth = (year: number, month: number) => {
   return new Date(year, month, 1).getDay();
 };
+
+/**
+ * Get the current timezone abbreviation (e.g., EST, EDT, KST)
+ */
+export const getTimezoneAbbreviation = (zone: Location): string => {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    timeZoneName: 'short'
+  });
+  const parts = formatter.formatToParts(new Date());
+  const tzName = parts.find(p => p.type === 'timeZoneName')?.value;
+  return tzName || (zone === Location.KOREA ? 'KST' : 'EST/EDT');
+};
